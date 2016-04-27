@@ -4,6 +4,7 @@ module Lexer
   , Lexer
 
   , class
+  , combinatorClass
   , lexer
 
   , lex
@@ -16,10 +17,10 @@ module Lexer
 with LR(k) parser generators, or as a standalone for simpler higher order pattern matching.
 
 # Types
-@docs Class, Lexeme, Lexer
+@docs Lexer, Lexeme, Class
 
 # Construction
-@docs class, lexer
+@docs lexer, class, combinatorClass
 
 # Lexing
 @docs lex
@@ -33,11 +34,12 @@ import Combine as Cb
 import String
 
 
-{-| A lexeme class, consisting of a regex pattern and a transducer that will interpret' the token
+{-| A lexeme class, consisting of a regex pattern and a transducer that will interpret the token
 and spit out an associated lexeme. -}
 type Class lex =
   Class
     { regexp : String
+    , parser : Maybe (Cb.Parser String)
     , interpret' : String -> Result (List String) lex
     }
 
@@ -67,11 +69,24 @@ class : String -> (String -> Result (List String) lex) -> Class lex
 class regexp interpret' =
   Class
     { regexp = regexp
+    , parser = Nothing
     , interpret' = interpret'
     }
 
 
-{-| Get the pattern of a class. -}
+{-| In the case that you wish to use a more advanced parser in place of a pattern, you may do that
+with this class. You can use this to create more powerful abstractions in your lexeme output. -}
+combinatorClass : Cb.Parser String -> (String -> Result (List String) lex) -> Class lex
+combinatorClass combinator interpret' =
+  Class
+    { regexp = ""
+    , parser = Just combinator
+    , interpret' = interpret'
+    }
+
+
+{-| Get the pattern of a class. Note that this will return the empty string in the case that a
+parser is used instead. -}
 pattern : Class lex -> String
 pattern (Class class) =
   class.regexp
@@ -83,15 +98,19 @@ interpret (Class class) input =
   class.interpret' input
 
 
-
-
 patternParser_ : Class lex -> Cb.Parser lex
-patternParser_ (Class {regexp, interpret'}) =
-  Cb.regex regexp `Cb.andThen`
-    (\smatch -> case interpret' smatch of
-      Result.Ok lexeme -> Cb.succeed lexeme
-      Result.Err errors -> Cb.fail errors
-    )
+patternParser_ (Class {regexp, parser, interpret'}) =
+  let
+    parser' =
+      Maybe.map identity parser
+      |> Maybe.withDefault (Cb.regex regexp)
+
+  in
+    parser' `Cb.andThen`
+      (\smatch -> case interpret' smatch of
+        Result.Ok lexeme -> Cb.succeed lexeme
+        Result.Err errors -> Cb.fail errors
+      )
 
 
 captureLexeme_ : Cb.Parser lex -> Cb.Context -> (Result (List String) (Lexeme lex), Cb.Context)
