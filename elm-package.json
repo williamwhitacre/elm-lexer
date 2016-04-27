@@ -1,5 +1,5 @@
 {
-    "version": "1.1.0",
+    "version": "1.2.0",
     "summary": "A lexer that provides contextual metadata with lexemes.",
     "repository": "https://github.com/williamwhitacre/elm-lexer.git",
     "license": "BSD3",

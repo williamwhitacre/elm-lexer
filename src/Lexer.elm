@@ -5,6 +5,7 @@ module Lexer
 
   , class
   , combinatorClass
+  , parserClass
   , lexer
 
   , lex
@@ -14,13 +15,13 @@ module Lexer
   ) where
 
 {-| An easy to use lexer written using `Bogdanp/elm-combine` that provides a sufficient backbone for use
-with LR(k) parser generators, or as a standalone for simpler higher order pattern matching.
+with LR(k) combinator generators, or as a standalone for simpler higher order pattern matching.
 
 # Types
 @docs Lexer, Lexeme, Class
 
 # Construction
-@docs lexer, class, combinatorClass
+@docs lexer, class, parserClass, combinatorClass
 
 # Lexing
 @docs lex
@@ -39,7 +40,8 @@ and spit out an associated lexeme. -}
 type Class lex =
   Class
     { regexp : String
-    , parser : Maybe (Cb.Parser String)
+    , combinator : Maybe (Cb.Parser String)
+    , parser : Maybe (Cb.Parser lex)
     , interpret' : String -> Result (List String) lex
     }
 
@@ -59,7 +61,7 @@ type Lexer lex =
   Lexer
     { classes : List (Class lex)
     , lexemeChoiceParser : Cb.Parser (Lexeme lex)
-    , parser : Cb.Parser (List (Lexeme lex))
+    , combinator : Cb.Parser (List (Lexeme lex))
     }
 
 
@@ -69,24 +71,44 @@ class : String -> (String -> Result (List String) lex) -> Class lex
 class regexp interpret' =
   Class
     { regexp = regexp
+    , combinator = Nothing
     , parser = Nothing
     , interpret' = interpret'
     }
 
 
-{-| In the case that you wish to use a more advanced parser in place of a pattern, you may do that
-with this class. You can use this to create more powerful abstractions in your lexeme output. -}
+{-| In the case that you wish to use a more advanced combinator in place of a pattern, you may do that
+with this class. You can use this to create more powerful abstractions in your lexeme output.
+
+_DEPRECIATED_
+-}
 combinatorClass : Cb.Parser String -> (String -> Result (List String) lex) -> Class lex
 combinatorClass combinator interpret' =
   Class
     { regexp = ""
-    , parser = Just combinator
+    , combinator = Just combinator
+    , parser = Nothing
     , interpret' = interpret'
     }
 
 
+{-| Use a combinator parser directly. The form of the lexeme itself may be turing recognizable in
+this case. In this sense you are no longer strictly "lexing", but the output still provides the
+typical useful token metadata for Lexeme record list produced the top level alternation. -}
+parserClass : Cb.Parser lex -> Class lex
+parserClass parser =
+  Class
+    { regexp = ""
+    , combinator = Nothing
+    , parser = Just parser
+    , interpret' =
+        Result.Err ["interpret' function unreachable in Lexer.Class produced by parserClass."]
+        |> always
+    }
+
+
 {-| Get the pattern of a class. Note that this will return the empty string in the case that a
-parser is used instead. -}
+combinator is used instead. -}
 pattern : Class lex -> String
 pattern (Class class) =
   class.regexp
@@ -99,18 +121,21 @@ interpret (Class class) input =
 
 
 patternParser_ : Class lex -> Cb.Parser lex
-patternParser_ (Class {regexp, parser, interpret'}) =
-  let
-    parser' =
-      Maybe.map identity parser
-      |> Maybe.withDefault (Cb.regex regexp)
+patternParser_ (Class {regexp, combinator, parser, interpret'}) =
+  case parser of
+    Just parser' -> parser'
+    Nothing ->
+      let
+        combinator' =
+          Maybe.map identity combinator
+          |> Maybe.withDefault (Cb.regex regexp)
 
-  in
-    parser' `Cb.andThen`
-      (\smatch -> case interpret' smatch of
-        Result.Ok lexeme -> Cb.succeed lexeme
-        Result.Err errors -> Cb.fail errors
-      )
+      in
+        combinator' `Cb.andThen`
+          (\smatch -> case interpret' smatch of
+            Result.Ok lexeme -> Cb.succeed lexeme
+            Result.Err errors -> Cb.fail errors
+          )
 
 
 captureLexeme_ : Cb.Parser lex -> Cb.Context -> (Result (List String) (Lexeme lex), Cb.Context)
@@ -152,16 +177,16 @@ lexer classes =
     Lexer
       { classes = classes
       , lexemeChoiceParser = lexemeChoiceParser
-      , parser = Cb.many lexemeChoiceParser
+      , combinator = Cb.many lexemeChoiceParser
       }
 
 
 {-| Lex a string, producing a list of errors (if any) and a list of lexemes. -}
 lex : Lexer lex -> String -> (List String, List (Lexeme lex))
-lex (Lexer {parser}) input =
+lex (Lexer {combinator}) input =
   let
     (result, context) =
-      Cb.parse parser input
+      Cb.parse combinator input
 
     completionErrors =
       if context.input /= "" then
